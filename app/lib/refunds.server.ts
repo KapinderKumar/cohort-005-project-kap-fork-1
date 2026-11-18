@@ -17,6 +17,7 @@ import {
   RefundStatus,
 } from "~/db/schema";
 import { formatPrice } from "~/lib/utils";
+import type { Notification } from "~/lib/notifier.server";
 import {
   REFUND_COMPLETION_LIMIT,
   REFUND_WATCH_LIMIT_SECONDS,
@@ -568,7 +569,9 @@ export function listTeamLicences(db: Queryable, buyerId: number, now: Date) {
 
 // ─── Deciding a Refund Request ───
 
-export type DecisionResult = { ok: true; email: Email } | Failure;
+export type DecisionResult =
+  | { ok: true; email: Email; notifications: Notification[] }
+  | Failure;
 
 function findOpenRefundRequest(
   tx: Queryable,
@@ -680,6 +683,15 @@ export function approveRefundRequest(
     return {
       ok: true,
       email: buildDecisionEmail(tx, purchase, RefundStatus.Approved, note),
+      notifications: [
+        buildDecisionNotification(
+          tx,
+          purchase,
+          RefundStatus.Approved,
+          note,
+          platformAdminId
+        ),
+      ],
     };
   });
 }
@@ -728,8 +740,60 @@ export function declineRefundRequest(
         RefundStatus.Declined,
         trimmedNote
       ),
+      notifications: [
+        buildDecisionNotification(
+          tx,
+          found.purchase,
+          RefundStatus.Declined,
+          trimmedNote,
+          platformAdminId
+        ),
+      ],
     };
   });
+}
+
+/** The Notification the buyer gets once their Refund Request is decided. */
+function buildDecisionNotification(
+  db: Queryable,
+  purchase: Purchase,
+  decision: RefundStatus.Approved | RefundStatus.Declined,
+  note: string | null,
+  platformAdminId: number
+): Notification {
+  const course = db
+    .select()
+    .from(courses)
+    .where(eq(courses.id, purchase.courseId))
+    .get();
+
+  const courseTitle = course?.title ?? "your course";
+  const purchased =
+    kindOf(getSeats(db, purchase.id)) === "team_licence"
+      ? `your ${courseTitle} Team Licence`
+      : courseTitle;
+
+  const outcome =
+    decision === RefundStatus.Approved
+      ? {
+          type: "refund_request_approved" as const,
+          title: "Refund approved",
+          sentence: `Your refund request for ${purchased} was approved, and your refund is on its way.`,
+        }
+      : {
+          type: "refund_request_declined" as const,
+          title: "Refund declined",
+          sentence: `Your refund request for ${purchased} was declined. You still have everything you bought.`,
+        };
+
+  return {
+    type: outcome.type,
+    actorId: platformAdminId,
+    recipientIds: [purchase.userId],
+    title: outcome.title,
+    body: note ? `${outcome.sentence} ${note}` : outcome.sentence,
+    url: "/settings#refund-requests",
+  };
 }
 
 /** The email the buyer gets once their Refund Request is decided. */
