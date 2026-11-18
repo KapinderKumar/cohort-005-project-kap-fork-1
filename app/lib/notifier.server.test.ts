@@ -2,9 +2,15 @@ import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { NotificationFeed } from "./notification-feed";
 import {
+  getNotificationFeed,
   getUnreadCount,
   knockTransport,
+  markAllNotificationsRead,
+  markNotificationRead,
+  markNotificationUnread,
+  NotificationNotFoundError,
   outboxNotificationTransport,
   sendNotifications,
   type Notification,
@@ -37,6 +43,15 @@ function fakeTransport(overrides: Partial<NotificationTransport> = {}) {
     async getUnreadCount() {
       return 0;
     },
+    async listFeed() {
+      return { items: [], unreadCount: 0, totalCount: 0 };
+    },
+    async ownsNotification() {
+      return true;
+    },
+    async markRead() {},
+    async markUnread() {},
+    async markAllRead() {},
     ...overrides,
   };
   return { sent, transport };
@@ -220,9 +235,10 @@ describe("knockTransport", () => {
   const signal = new AbortController().signal;
 
   function fakeKnock(status: number, body: unknown) {
-    const requests: { url: string; body: unknown }[] = [];
+    const requests: { method?: string; url: string; body: unknown }[] = [];
     const fetchImpl: typeof fetch = async (input, init) => {
       requests.push({
+        method: init?.method,
         url: String(input),
         body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
       });
@@ -304,5 +320,309 @@ describe("knockTransport", () => {
     await expect(transport.getUnreadCount(7, signal)).rejects.toThrow();
 
     expect(requests).toHaveLength(1);
+  });
+
+  function feedEntry(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "message-1",
+      inserted_at: "2026-11-18T10:00:00Z",
+      read_at: null,
+      data: {
+        type: "refund_request_approved",
+        title: "Refund approved",
+        body: "Your refund is on its way.",
+        url: "/settings#refund-requests",
+      },
+      ...overrides,
+    };
+  }
+
+  function feedResponse(entries: unknown[]) {
+    return {
+      entries,
+      meta: { unread_count: 3, unseen_count: 99, total_count: 8 },
+      page_info: { page_size: 50 },
+    };
+  }
+
+  it("maps feed items back to their content, read state and counts", async () => {
+    const { requests, transport } = fakeKnock(
+      200,
+      feedResponse([
+        feedEntry(),
+        feedEntry({ id: "message-2", read_at: "2026-11-18T11:00:00Z" }),
+      ])
+    );
+
+    await expect(transport.listFeed(7, 10, signal)).resolves.toEqual({
+      unreadCount: 3,
+      totalCount: 8,
+      items: [
+        {
+          id: "message-1",
+          type: "refund_request_approved",
+          title: "Refund approved",
+          body: "Your refund is on its way.",
+          url: "/settings#refund-requests",
+          read: false,
+          createdAt: "2026-11-18T10:00:00Z",
+        },
+        {
+          id: "message-2",
+          type: "refund_request_approved",
+          title: "Refund approved",
+          body: "Your refund is on its way.",
+          url: "/settings#refund-requests",
+          read: true,
+          createdAt: "2026-11-18T10:00:00Z",
+        },
+      ],
+    });
+    expect(requests[0].url).toContain("/v1/users/7/feeds/test-feed");
+    expect(requests[0].url).toContain("page_size=10");
+  });
+
+  it.each([
+    "https://evil.example/phish",
+    "//evil.example/phish",
+    "/\\evil.example/phish",
+    "/\t/evil.example/phish",
+    "javascript:alert(1)",
+    "settings",
+  ])("drops the link %j, which isn't inside Cadence", async (url) => {
+    const { transport } = fakeKnock(
+      200,
+      feedResponse([
+        feedEntry({
+          data: { ...feedEntry().data, url },
+        }),
+      ])
+    );
+
+    const feed = await transport.listFeed(7, 10, signal);
+
+    expect(feed.items[0].url).toBeNull();
+  });
+
+  it("keeps the path, query and fragment of a link inside Cadence", async () => {
+    const url = "/courses/react/lessons/4?tab=discussion#comment-9";
+    const { transport } = fakeKnock(
+      200,
+      feedResponse([feedEntry({ data: { ...feedEntry().data, url } })])
+    );
+
+    const feed = await transport.listFeed(7, 10, signal);
+
+    expect(feed.items[0].url).toBe(url);
+  });
+
+  it("leaves out a feed item that doesn't carry Notification content", async () => {
+    const { transport } = fakeKnock(
+      200,
+      feedResponse([feedEntry({ id: "broken", data: null }), feedEntry()])
+    );
+
+    const feed = await transport.listFeed(7, 10, signal);
+
+    expect(feed.items.map((item) => item.id)).toEqual(["message-1"]);
+  });
+
+  it("marks one message read and unread", async () => {
+    const { requests, transport } = fakeKnock(200, {});
+
+    await transport.markRead("message-1", signal);
+    await transport.markUnread("message-1", signal);
+
+    expect(requests.map(({ method, url }) => [method, new URL(url).pathname]))
+      .toEqual([
+        ["PUT", "/v1/messages/message-1/read"],
+        ["DELETE", "/v1/messages/message-1/read"],
+      ]);
+  });
+
+  it("always scopes mark all read to the recipient", async () => {
+    const { requests, transport } = fakeKnock(200, { status: "queued" });
+
+    await transport.markAllRead(7, signal);
+
+    expect(new URL(requests[0].url).pathname).toBe(
+      "/v1/channels/test-feed/messages/bulk/read"
+    );
+    expect(requests[0].body).toEqual({ recipient_ids: ["7"] });
+  });
+
+  it.each([
+    ["their own message", { recipient: "7", channel_id: "test-feed" }, true],
+    ["someone else's", { recipient: "8", channel_id: "test-feed" }, false],
+    ["another channel's", { recipient: "7", channel_id: "email" }, false],
+    [
+      "an object recipient's",
+      {
+        recipient: { id: "7", collection: "teams" },
+        channel_id: "test-feed",
+      },
+      false,
+    ],
+  ])("decides ownership of %s", async (_name, message, expected) => {
+    const { requests, transport } = fakeKnock(200, message);
+
+    await expect(
+      transport.ownsNotification(7, "message-1", signal)
+    ).resolves.toBe(expected);
+    expect(new URL(requests[0].url).pathname).toBe("/v1/messages/message-1");
+  });
+
+  it("treats a message Knock can't find as not the person's", async () => {
+    const { transport } = fakeKnock(404, { message: "Not found" });
+
+    await expect(
+      transport.ownsNotification(7, "missing", signal)
+    ).resolves.toBe(false);
+  });
+
+  it("lets other failures while checking ownership through", async () => {
+    const { transport } = fakeKnock(500, { message: "Broken" });
+
+    await expect(
+      transport.ownsNotification(7, "message-1", signal)
+    ).rejects.toThrow();
+  });
+});
+
+describe("changing read state", () => {
+  function recordingTransport(ownerId = 7) {
+    const changes: string[] = [];
+    const { transport } = fakeTransport({
+      ownsNotification: async (userId) => userId === ownerId,
+      async markRead(id) {
+        changes.push(`read ${id}`);
+      },
+      async markUnread(id) {
+        changes.push(`unread ${id}`);
+      },
+      async markAllRead(userId) {
+        changes.push(`all read for ${userId}`);
+      },
+    });
+    return { changes, transport };
+  }
+
+  it("marks a person's own Notification read", async () => {
+    const { changes, transport } = recordingTransport();
+
+    await markNotificationRead(7, "message-1", transport);
+
+    expect(changes).toEqual(["read message-1"]);
+  });
+
+  it("marks a person's own Notification unread", async () => {
+    const { changes, transport } = recordingTransport();
+
+    await markNotificationUnread(7, "message-1", transport);
+
+    expect(changes).toEqual(["unread message-1"]);
+  });
+
+  it("won't change a Notification belonging to someone else", async () => {
+    const { changes, transport } = recordingTransport(8);
+
+    await expect(
+      markNotificationRead(7, "message-1", transport)
+    ).rejects.toBeInstanceOf(NotificationNotFoundError);
+    await expect(
+      markNotificationUnread(7, "message-1", transport)
+    ).rejects.toBeInstanceOf(NotificationNotFoundError);
+
+    expect(changes).toEqual([]);
+  });
+
+  it("marks all read for that person only", async () => {
+    const { changes, transport } = recordingTransport();
+
+    await markAllNotificationsRead(7, transport);
+
+    expect(changes).toEqual(["all read for 7"]);
+  });
+
+  it("lets a failed change reach the caller", async () => {
+    const { transport } = fakeTransport({
+      markAllRead: async () => {
+        throw new Error("Knock is down");
+      },
+    });
+
+    await expect(markAllNotificationsRead(7, transport)).rejects.toThrow(
+      "Knock is down"
+    );
+  });
+
+  it("stops waiting for a change that hangs", async () => {
+    const { transport } = fakeTransport({ ownsNotification: never });
+
+    await expect(
+      markNotificationRead(7, "message-1", transport, 10)
+    ).rejects.toThrow("did not respond");
+  });
+
+  it("does nothing, without an error, when Knock isn't configured", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "notification-outbox-"));
+    const transport = outboxNotificationTransport(directory);
+
+    await expect(
+      markNotificationRead(7, "message-1", transport)
+    ).resolves.toBeUndefined();
+    await expect(
+      markNotificationUnread(7, "message-1", transport)
+    ).resolves.toBeUndefined();
+    await expect(
+      markAllNotificationsRead(7, transport)
+    ).resolves.toBeUndefined();
+
+    expect(readdirSync(directory)).toEqual([]);
+  });
+});
+
+describe("getNotificationFeed", () => {
+  const feed: NotificationFeed = { items: [], unreadCount: 2, totalCount: 5 };
+
+  it("reads the signed-in person's own feed", async () => {
+    const asked: number[] = [];
+    const { transport } = fakeTransport({
+      async listFeed(userId) {
+        asked.push(userId);
+        return feed;
+      },
+    });
+
+    await expect(getNotificationFeed(7, 10, transport)).resolves.toEqual(feed);
+    expect(asked).toEqual([7]);
+  });
+
+  it("lets a read failure reach the caller", async () => {
+    const { transport } = fakeTransport({
+      listFeed: async () => {
+        throw new Error("Knock is down");
+      },
+    });
+
+    await expect(getNotificationFeed(7, 10, transport)).rejects.toThrow(
+      "Knock is down"
+    );
+  });
+
+  it("lets a read timeout reach the caller", async () => {
+    const { transport } = fakeTransport({ listFeed: never });
+
+    await expect(getNotificationFeed(7, 10, transport, 10)).rejects.toThrow(
+      "did not respond"
+    );
+  });
+
+  it("is empty, without an error, when Knock isn't configured", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "notification-outbox-"));
+
+    await expect(
+      getNotificationFeed(7, 10, outboxNotificationTransport(directory))
+    ).resolves.toEqual({ items: [], unreadCount: 0, totalCount: 0 });
   });
 });
