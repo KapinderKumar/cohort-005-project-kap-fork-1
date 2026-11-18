@@ -1,4 +1,13 @@
-import { Outlet } from "react-router";
+import { Outlet, useSearchParams } from "react-router";
+import {
+  InboxPrototypeProvider,
+  inboxVariants,
+  VariantABell,
+  VariantBNavItem,
+  VariantCNavItem,
+  VariantCPage,
+} from "~/components/inbox-prototype";
+import { PrototypeSwitcher } from "~/components/prototype-switcher";
 import type { Route } from "./+types/layout.app";
 import { Sidebar } from "~/components/sidebar";
 import { DevUI } from "~/components/dev-ui";
@@ -226,17 +235,37 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
     countries,
     isTeamAdmin: userIsTeamAdmin,
   } = loaderData;
+  // PROTOTYPE: Inbox UI variants
+  const [params] = useSearchParams();
+  const variant = params.get("variant") ?? "A";
+  const showInboxPage = (variant === "A" || variant === "C") && !!params.get("inbox");
 
   return (
+    <InboxPrototypeProvider
+      role={currentUser?.role ?? null}
+      isTeamAdmin={userIsTeamAdmin}
+    >
     <div className="flex h-screen overflow-hidden">
       <Sidebar
         currentUser={currentUser}
         recentCourses={recentCourses}
         isTeamAdmin={userIsTeamAdmin}
+        headerSlot={currentUser && variant === "A" ? <VariantABell /> : null}
+        navSlot={
+          !currentUser ? null : variant === "B" ? (
+            <VariantBNavItem />
+          ) : variant === "C" ? (
+            <VariantCNavItem />
+          ) : null
+        }
       />
       <main className="flex-1 overflow-y-auto">
-        <Outlet />
+        {showInboxPage ? <VariantCPage /> : <Outlet />}
       </main>
+      <PrototypeSwitcher
+        variants={inboxVariants}
+        extraToggles={[{ param: "empty", label: "empty" }]}
+      />
       <DevUI
         users={users}
         currentUser={currentUser}
@@ -246,5 +275,6 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
       />
       <Toaster position="bottom-right" richColors closeButton />
     </div>
+    </InboxPrototypeProvider>
   );
 }
