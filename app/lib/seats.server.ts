@@ -1,6 +1,18 @@
-import { eq } from "drizzle-orm";
-import { coupons, enrollments, purchases } from "~/db/schema";
-import { findEnrollment } from "~/lib/enrollments.server";
+import { and, asc, eq } from "drizzle-orm";
+import {
+  coupons,
+  courses,
+  enrollments,
+  purchases,
+  teamMembers,
+  users,
+  TeamMemberRole,
+} from "~/db/schema";
+import {
+  buildNewEnrollmentNotification,
+  findEnrollment,
+} from "~/lib/enrollments.server";
+import type { Notification } from "~/lib/notifier.server";
 import {
   getSeatAvailability,
   type Db,
@@ -27,7 +39,11 @@ export function seatUnavailableReason(
 }
 
 export type ClaimSeatResult =
-  | { ok: true; enrollment: typeof enrollments.$inferSelect }
+  | {
+      ok: true;
+      enrollment: typeof enrollments.$inferSelect;
+      notifications: Notification[];
+    }
   | { ok: false; error: string };
 
 export function claimSeat(
@@ -70,6 +86,20 @@ export function claimSeat(
     };
   }
 
+  const course = db
+    .select()
+    .from(courses)
+    .where(eq(courses.id, seat.courseId))
+    .get();
+  if (!course) {
+    return { ok: false, error: "Course not found" };
+  }
+
+  const student = db.select().from(users).where(eq(users.id, userId)).get();
+  if (!student) {
+    return { ok: false, error: "User not found" };
+  }
+
   db.update(coupons)
     .set({
       redeemedByUserId: userId,
@@ -84,5 +114,31 @@ export function claimSeat(
     .returning()
     .get();
 
-  return { ok: true, enrollment };
+  const teamAdmins = db
+    .select({ userId: teamMembers.userId })
+    .from(teamMembers)
+    .where(
+      and(
+        eq(teamMembers.teamId, seat.teamId),
+        eq(teamMembers.role, TeamMemberRole.Admin)
+      )
+    )
+    .orderBy(asc(teamMembers.id))
+    .all();
+
+  return {
+    ok: true,
+    enrollment,
+    notifications: [
+      {
+        type: "seat_claimed",
+        actorId: userId,
+        recipientIds: teamAdmins.map((admin) => admin.userId),
+        title: "Seat claimed",
+        body: `${student.name} claimed a seat on your ${course.title} Team Licence.`,
+        url: "/team",
+      },
+      buildNewEnrollmentNotification(student, course),
+    ],
+  };
 }

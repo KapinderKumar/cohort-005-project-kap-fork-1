@@ -516,6 +516,75 @@ describe("the Notification for a decided Refund Request", () => {
   });
 });
 
+describe("the Notification for a new Refund Request", () => {
+  it("tells every Platform Admin about an Individual Purchase", () => {
+    const secondAdmin = db
+      .insert(schema.users)
+      .values({
+        name: "Quinn Admin",
+        email: "quinn@example.com",
+        role: UserRole.Admin,
+      })
+      .returning()
+      .get();
+    const purchase = buyForSelf(base.user.id);
+
+    const result = raiseRefundRequest(
+      db,
+      purchase.id,
+      base.user.id,
+      "It was not what I expected.",
+      NOW
+    );
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notifications).toEqual([
+      {
+        type: "new_refund_request",
+        actorId: base.user.id,
+        recipientIds: [platformAdmin.id, secondAdmin.id],
+        title: "New refund request",
+        body: "Test User requested a refund for Test Course.",
+        url: "/admin/refunds",
+      },
+    ]);
+  });
+
+  it("says when a Team Licence is involved, without the amount or Seat count", () => {
+    const priya = addLearner("Priya");
+    const { purchase } = buySeats(priya.id, 3);
+
+    const result = raiseRefundRequest(
+      db,
+      purchase.id,
+      priya.id,
+      "We no longer need these.",
+      NOW
+    );
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notifications[0].body).toBe(
+      "Priya requested a refund for a Test Course Team Licence."
+    );
+  });
+
+  it("returns no Notifications when the request is refused", () => {
+    const purchase = buyForSelf(base.user.id);
+    raise(purchase.id, base.user.id);
+
+    const result = raiseRefundRequest(
+      db,
+      purchase.id,
+      base.user.id,
+      "Asking twice.",
+      NOW
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty("notifications");
+  });
+});
+
 describe("listing Refund Requests", () => {
   it("shows a Platform Admin live figures and the rules a request breaks", () => {
     const purchase = buyForSelf(base.user.id);
