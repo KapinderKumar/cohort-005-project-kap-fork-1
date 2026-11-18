@@ -8,6 +8,7 @@ import { resolveCountry } from "~/lib/country.server";
 import { parseParams, parseFormData } from "~/lib/validation";
 import { getSeatAvailability } from "~/lib/refunds.server";
 import { claimSeat, seatUnavailableReason } from "~/lib/seats.server";
+import { sendNotifications } from "~/lib/notifier.server";
 import { Card, CardContent } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Ticket, AlertCircle, CheckCircle2, Globe } from "lucide-react";
@@ -122,6 +123,8 @@ export async function action({ params, request }: Route.ActionArgs) {
   if (!result.ok) {
     return data({ error: result.error }, { status: 400 });
   }
+
+  await sendNotifications(result.notifications);
 
   const course = getCourseById(result.enrollment.courseId);
   if (!course) {

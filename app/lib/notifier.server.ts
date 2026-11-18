@@ -16,7 +16,14 @@ import {
 // each one is written to .outbox/ instead, and the Notification Feed is empty.
 
 export type NotificationType =
-  "refund_request_approved" | "refund_request_declined";
+  | "refund_request_approved"
+  | "refund_request_declined"
+  | "new_refund_request"
+  | "new_discussion_question"
+  | "new_discussion_reply"
+  | "seat_claimed"
+  | "course_rated"
+  | "new_enrollment";
 
 export type Notification = {
   type: NotificationType;

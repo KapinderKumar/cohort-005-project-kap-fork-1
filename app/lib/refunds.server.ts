@@ -15,6 +15,7 @@ import {
   videoWatchEvents,
   LessonProgressStatus,
   RefundStatus,
+  UserRole,
 } from "~/db/schema";
 import { formatPrice } from "~/lib/utils";
 import type { Notification } from "~/lib/notifier.server";
@@ -352,8 +353,41 @@ export function getRefundOffer(
 export type Email = { to: string; subject: string; body: string };
 
 export type RaiseResult =
-  | { ok: true; refundRequestId: number; kind: PurchaseKind; email: Email }
+  | {
+      ok: true;
+      refundRequestId: number;
+      kind: PurchaseKind;
+      email: Email;
+      notifications: Notification[];
+    }
   | Failure;
+
+/** The Notification every Platform Admin gets when a buyer raises a request. */
+function buildNewRefundRequestNotification(
+  db: Queryable,
+  buyer: typeof users.$inferSelect,
+  courseTitle: string,
+  kind: PurchaseKind
+): Notification {
+  const platformAdmins = db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.role, UserRole.Admin))
+    .orderBy(asc(users.id))
+    .all();
+
+  const purchased =
+    kind === "team_licence" ? `a ${courseTitle} Team Licence` : courseTitle;
+
+  return {
+    type: "new_refund_request",
+    actorId: buyer.id,
+    recipientIds: platformAdmins.map((admin) => admin.id),
+    title: "New refund request",
+    body: `${buyer.name} requested a refund for ${purchased}.`,
+    url: "/admin/refunds",
+  };
+}
 
 export function raiseRefundRequest(
   db: Db,
@@ -388,10 +422,15 @@ export function raiseRefundRequest(
     .returning()
     .get();
 
+  const kind = kindOf(getSeats(db, purchase.id));
+
   return {
     ok: true,
     refundRequestId: refundRequest.id,
-    kind: kindOf(getSeats(db, purchase.id)),
+    kind,
+    notifications: [
+      buildNewRefundRequestNotification(db, buyer, course.title, kind),
+    ],
     email: {
       to: buyer.email,
       subject: `Refund requested — ${course.title}`,

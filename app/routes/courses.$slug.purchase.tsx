@@ -32,6 +32,7 @@ import { formatDuration, formatPrice } from "~/lib/utils";
 import { resolveCountry } from "~/lib/country.server";
 import { calculatePppPrice, getCountryTierInfo, COUNTRIES } from "~/lib/ppp";
 import { parseFormData, parseParams } from "~/lib/validation";
+import { sendNotifications } from "~/lib/notifier.server";
 import {
   confirmIndividualPurchase,
   confirmTeamPurchase,
@@ -252,13 +253,14 @@ export async function action({ params, request }: Route.ActionArgs) {
     if (isUserEnrolled(currentUserId, course.id)) {
       throw redirect(`/courses/${slug}`);
     }
-    confirmIndividualPurchase(
+    const { notifications } = confirmIndividualPurchase(
       db,
       currentUserId,
       course.id,
       pppPrice,
       country
     );
+    await sendNotifications(notifications);
     throw redirect(`/courses/${slug}/welcome`);
   }
 

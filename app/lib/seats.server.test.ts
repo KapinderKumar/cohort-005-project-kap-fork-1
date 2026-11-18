@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
-import { RefundStatus, UserRole } from "~/db/schema";
+import { RefundStatus, TeamMemberRole, UserRole } from "~/db/schema";
 import { confirmTeamPurchase } from "./purchases.server";
 import { claimSeat, seatUnavailableReason } from "./seats.server";
 
@@ -165,6 +165,72 @@ describe("claimSeat", () => {
         "This coupon can only be redeemed from the same country as the purchaser",
     });
     expectNotClaimed(seat.id);
+  });
+});
+
+describe("the Notifications for a claimed Seat", () => {
+  it("tells the Team Admin and the Instructor", () => {
+    const { seat } = buySeat();
+
+    const result = claimSeat(db, seat.code, student.id, "IN");
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notifications).toEqual([
+      {
+        type: "seat_claimed",
+        actorId: student.id,
+        recipientIds: [base.user.id],
+        title: "Seat claimed",
+        body: "Sam Student claimed a seat on your Test Course Team Licence.",
+        url: "/team",
+      },
+      {
+        type: "new_enrollment",
+        actorId: student.id,
+        recipientIds: [base.instructor.id],
+        title: "New enrollment",
+        body: "Sam Student enrolled in Test Course.",
+        url: `/instructor/${base.course.id}/students`,
+      },
+    ]);
+  });
+
+  it("tells every Team Admin on the team, and no other member", () => {
+    const { seat } = buySeat();
+    const addMember = (name: string, role: TeamMemberRole) => {
+      const member = db
+        .insert(schema.users)
+        .values({
+          name,
+          email: `${name.toLowerCase()}@example.com`,
+          role: UserRole.Student,
+        })
+        .returning()
+        .get();
+      db.insert(schema.teamMembers)
+        .values({ teamId: seat.teamId, userId: member.id, role })
+        .run();
+      return member;
+    };
+    const secondAdmin = addMember("Tara", TeamMemberRole.Admin);
+    addMember("Milo", TeamMemberRole.Member);
+
+    const result = claimSeat(db, seat.code, student.id, "IN");
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notifications[0].recipientIds).toEqual([
+      base.user.id,
+      secondAdmin.id,
+    ]);
+  });
+
+  it("returns no Notifications when the Seat can't be claimed", () => {
+    const { seat } = buySeat("IN");
+
+    const result = claimSeat(db, seat.code, student.id, "US");
+
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty("notifications");
   });
 });
 

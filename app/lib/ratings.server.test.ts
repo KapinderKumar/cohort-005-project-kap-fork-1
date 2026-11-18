@@ -29,7 +29,7 @@ function ageRatings() {
 
 describe("rateCourse", () => {
   it("records a first rating", () => {
-    const rating = rateCourse(db, base.user.id, base.course.id, 4);
+    const { rating } = rateCourse(db, base.user.id, base.course.id, 4);
 
     expect(rating).toMatchObject({
       userId: base.user.id,
@@ -43,7 +43,7 @@ describe("rateCourse", () => {
     rateCourse(db, base.user.id, base.course.id, 3);
     ageRatings();
 
-    const rating = rateCourse(db, base.user.id, base.course.id, 5);
+    const { rating } = rateCourse(db, base.user.id, base.course.id, 5);
 
     expect(rating.rating).toBe(5);
     expect(rating.createdAt).toBe(LONG_AGO);
@@ -55,7 +55,7 @@ describe("rateCourse", () => {
     rateCourse(db, base.user.id, base.course.id, 3);
     ageRatings();
 
-    const rating = rateCourse(db, base.user.id, base.course.id, 3);
+    const { rating } = rateCourse(db, base.user.id, base.course.id, 3);
 
     expect(rating.rating).toBe(3);
     expect(rating.updatedAt).not.toBe(LONG_AGO);
@@ -82,5 +82,48 @@ describe("rateCourse", () => {
       "Course not found"
     );
     expect(storedRatings()).toHaveLength(0);
+  });
+});
+
+describe("the Course rated Notification", () => {
+  it("tells the Instructor about a first rating", () => {
+    const { notifications } = rateCourse(db, base.user.id, base.course.id, 4);
+
+    expect(notifications).toEqual([
+      {
+        type: "course_rated",
+        actorId: base.user.id,
+        recipientIds: [base.instructor.id],
+        title: "Course rated",
+        body: "Test User rated Test Course 4 out of 5.",
+        url: "/instructor/analytics",
+      },
+    ]);
+  });
+
+  it("tells the Instructor the old and new values of a changed rating", () => {
+    rateCourse(db, base.user.id, base.course.id, 3);
+
+    const { notifications } = rateCourse(db, base.user.id, base.course.id, 4);
+
+    expect(notifications).toEqual([
+      {
+        type: "course_rated",
+        actorId: base.user.id,
+        recipientIds: [base.instructor.id],
+        title: "Course rated",
+        body: "Test User changed their rating of Test Course from 3 to 4 out of 5.",
+        url: "/instructor/analytics",
+      },
+    ]);
+  });
+
+  it("is not sent when the rating is unchanged", () => {
+    rateCourse(db, base.user.id, base.course.id, 3);
+    ageRatings();
+
+    const { notifications } = rateCourse(db, base.user.id, base.course.id, 3);
+
+    expect(notifications).toEqual([]);
   });
 });

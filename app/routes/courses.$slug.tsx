@@ -52,6 +52,7 @@ import {
 import { parseFormData } from "~/lib/validation";
 import { MAX_RATING, MIN_RATING } from "~/lib/ratings";
 import { findRating, rateCourse } from "~/lib/ratings.server";
+import { sendNotifications } from "~/lib/notifier.server";
 import { StarRating, StarRatingInput } from "~/components/star-rating";
 
 function getCourseBySlug(slug: string) {
@@ -431,7 +432,13 @@ export async function action({ params, request }: Route.ActionArgs) {
     return { ok: false as const, error: "Please choose a rating from 1 to 5." };
   }
 
-  rateCourse(db, currentUserId, course.id, parsed.data.rating);
+  const { notifications } = rateCourse(
+    db,
+    currentUserId,
+    course.id,
+    parsed.data.rating
+  );
+  await sendNotifications(notifications);
 
   return { ok: true as const, error: null };
 }
