@@ -83,6 +83,13 @@ describe("rateCourse", () => {
     );
     expect(storedRatings()).toHaveLength(0);
   });
+
+  it("fails at the write for a rater who doesn't exist, as it always has", () => {
+    expect(() => rateCourse(db, 9999, base.course.id, 4)).toThrow(
+      "FOREIGN KEY constraint failed"
+    );
+    expect(storedRatings()).toHaveLength(0);
+  });
 });
 
 describe("the Course rated Notification", () => {

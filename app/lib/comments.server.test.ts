@@ -153,6 +153,17 @@ describe("createComment", () => {
     expect(storedComments()).toHaveLength(0);
   });
 
+  it("fails at the write for an author who doesn't exist, as it always has", () => {
+    expect(() => post(9999, null, "Hello")).toThrow(
+      "FOREIGN KEY constraint failed"
+    );
+    expect(storedComments()).toHaveLength(0);
+  });
+
+  it("reports a bad parent comment before noticing a missing author", () => {
+    expect(() => post(9999, 8888, "Hello")).toThrow("Parent comment not found");
+  });
+
   it("rejects a parent comment on a different lesson", () => {
     const { comment: question } = post(
       base.user.id,

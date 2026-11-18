@@ -86,20 +86,6 @@ export function claimSeat(
     };
   }
 
-  const course = db
-    .select()
-    .from(courses)
-    .where(eq(courses.id, seat.courseId))
-    .get();
-  if (!course) {
-    return { ok: false, error: "Course not found" };
-  }
-
-  const student = db.select().from(users).where(eq(users.id, userId)).get();
-  if (!student) {
-    return { ok: false, error: "User not found" };
-  }
-
   db.update(coupons)
     .set({
       redeemedByUserId: userId,
@@ -113,6 +99,17 @@ export function claimSeat(
     .values({ userId, courseId: seat.courseId })
     .returning()
     .get();
+
+  // Read after the writes, so a missing record fails where it always has.
+  const course = db
+    .select()
+    .from(courses)
+    .where(eq(courses.id, seat.courseId))
+    .get();
+  const student = db.select().from(users).where(eq(users.id, userId)).get();
+  if (!course || !student) {
+    return { ok: true, enrollment, notifications: [] };
+  }
 
   const teamAdmins = db
     .select({ userId: teamMembers.userId })

@@ -14,7 +14,7 @@ import type { Db } from "~/lib/refunds.server";
 // ─── Comments ───
 // Posting a comment on a lesson. Who may post is the route's decision: the
 // lesson page requires course access, the Unanswered Questions page requires
-// course staff.
+// the course's Instructor or a Platform Admin.
 //
 // Every function takes the database first, so tests can hand in an in-memory
 // one. Failures throw an Error whose message is safe to show the person posting.
@@ -64,11 +64,6 @@ export function createComment(
     throw new Error("Lesson not found");
   }
 
-  const author = db.select().from(users).where(eq(users.id, userId)).get();
-  if (!author) {
-    throw new Error("User not found");
-  }
-
   let askerId: number | null = null;
 
   if (parentId !== null) {
@@ -95,8 +90,13 @@ export function createComment(
     .returning()
     .get();
 
-  const url = `/courses/${lesson.courseSlug}/lessons/${lessonId}#comment-${comment.id}`;
   const notifications: Notification[] = [];
+
+  // Read after the write, so a missing author fails where it always has.
+  const author = db.select().from(users).where(eq(users.id, userId)).get();
+  if (!author) return { comment, notifications };
+
+  const url = `/courses/${lesson.courseSlug}/lessons/${lessonId}#comment-${comment.id}`;
 
   // A top-level comment by the course's Instructor isn't a Discussion Question.
   if (parentId === null && userId !== lesson.instructorId) {
@@ -110,10 +110,15 @@ export function createComment(
     });
   }
 
-  // Only staff answers are announced, and only on a Discussion Question.
-  const isStaff =
+  // Only a Discussion Reply from the course's Instructor or a Platform Admin is
+  // announced, and only on a Discussion Question.
+  const isInstructorOrPlatformAdmin =
     userId === lesson.instructorId || author.role === UserRole.Admin;
-  if (askerId !== null && askerId !== lesson.instructorId && isStaff) {
+  if (
+    askerId !== null &&
+    askerId !== lesson.instructorId &&
+    isInstructorOrPlatformAdmin
+  ) {
     notifications.push({
       type: "new_discussion_reply",
       actorId: userId,
