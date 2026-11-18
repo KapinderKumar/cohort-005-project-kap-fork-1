@@ -78,6 +78,29 @@ describe("confirmIndividualPurchase", () => {
   });
 });
 
+describe("the New Enrollment Notification for an Individual Purchase", () => {
+  it("tells the Instructor, without the amount or where it came from", () => {
+    const { notifications } = confirmIndividualPurchase(
+      db,
+      base.user.id,
+      base.course.id,
+      7900,
+      "IN"
+    );
+
+    expect(notifications).toEqual([
+      {
+        type: "new_enrollment",
+        actorId: base.user.id,
+        recipientIds: [base.instructor.id],
+        title: "New enrollment",
+        body: "Test User enrolled in Test Course.",
+        url: `/instructor/${base.course.id}/students`,
+      },
+    ]);
+  });
+});
+
 describe("confirmTeamPurchase", () => {
   it("does not enroll the buyer", () => {
     confirmTeamPurchase(db, base.user.id, base.course.id, 15800, "IN", 2);

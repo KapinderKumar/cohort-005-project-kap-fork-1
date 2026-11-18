@@ -7,9 +7,13 @@ import {
   purchases,
   teamMembers,
   teams,
+  users,
   TeamMemberRole,
 } from "~/db/schema";
-import { findEnrollment } from "~/lib/enrollments.server";
+import {
+  buildNewEnrollmentNotification,
+  findEnrollment,
+} from "~/lib/enrollments.server";
 import type { Db } from "~/lib/refunds.server";
 
 // ─── Purchases ───
@@ -49,6 +53,11 @@ export function confirmIndividualPurchase(
     throw new Error("Course not found");
   }
 
+  const buyer = db.select().from(users).where(eq(users.id, userId)).get();
+  if (!buyer) {
+    throw new Error("User not found");
+  }
+
   const purchase = createPurchase(db, userId, courseId, amountPaid, country);
   const enrollment = db
     .insert(enrollments)
@@ -56,7 +65,11 @@ export function confirmIndividualPurchase(
     .returning()
     .get();
 
-  return { purchase, enrollment };
+  return {
+    purchase,
+    enrollment,
+    notifications: [buildNewEnrollmentNotification(buyer, course)],
+  };
 }
 
 function getTeamForAdmin(db: Db, userId: number) {
