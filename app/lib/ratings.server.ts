@@ -16,7 +16,10 @@ export function findRating(db: Db, userId: number, courseId: number) {
     .select()
     .from(courseRatings)
     .where(
-      and(eq(courseRatings.userId, userId), eq(courseRatings.courseId, courseId))
+      and(
+        eq(courseRatings.userId, userId),
+        eq(courseRatings.courseId, courseId)
+      )
     )
     .get();
 }
@@ -70,17 +73,15 @@ export function rateCourse(
     throw new Error("Course not found");
   }
 
-  const rater = db.select().from(users).where(eq(users.id, userId)).get();
-  if (!rater) {
-    throw new Error("User not found");
-  }
-
   const existing = findRating(db, userId, courseId);
   const saved = saveRating(db, existing?.id, userId, courseId, rating);
 
+  // Read after the write, so a missing rater fails where it always has.
+  const rater = db.select().from(users).where(eq(users.id, userId)).get();
+
   // Saving always refreshes updatedAt, so only the values show what changed.
   const notifications: Notification[] =
-    existing?.rating === rating
+    !rater || existing?.rating === rating
       ? []
       : [
           {

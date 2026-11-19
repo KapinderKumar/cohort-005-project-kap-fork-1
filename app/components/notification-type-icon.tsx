@@ -9,6 +9,10 @@ import {
   UserPlus,
   type LucideIcon,
 } from "lucide-react";
+import {
+  isNotificationType,
+  type NotificationType,
+} from "~/lib/notification-feed";
 import { cn } from "~/lib/utils";
 
 type TypeStyle = { icon: LucideIcon; tone: string };
@@ -18,7 +22,7 @@ const REFUND_DECIDED: TypeStyle = {
   tone: "text-emerald-600 bg-emerald-500/10",
 };
 
-const TYPE_STYLES: Record<string, TypeStyle> = {
+const TYPE_STYLES: Record<NotificationType, TypeStyle> = {
   refund_request_approved: REFUND_DECIDED,
   refund_request_declined: REFUND_DECIDED,
   new_refund_request: {
@@ -53,7 +57,7 @@ export function NotificationTypeIcon({
   type: string;
   className?: string;
 }) {
-  const { icon: Icon, tone } = Object.hasOwn(TYPE_STYLES, type)
+  const { icon: Icon, tone } = isNotificationType(type)
     ? TYPE_STYLES[type]
     : UNKNOWN_TYPE;
 

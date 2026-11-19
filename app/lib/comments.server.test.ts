@@ -18,7 +18,11 @@ beforeEach(() => {
 
   platformAdmin = db
     .insert(schema.users)
-    .values({ name: "Pat Admin", email: "pat@example.com", role: UserRole.Admin })
+    .values({
+      name: "Pat Admin",
+      email: "pat@example.com",
+      role: UserRole.Admin,
+    })
     .returning()
     .get();
 
@@ -104,7 +108,11 @@ describe("createComment", () => {
   it("posts a reply to a top-level comment", () => {
     const { comment: question } = post(base.user.id, null, "Why?");
 
-    const { comment: reply } = post(base.instructor.id, question.id, "Because.");
+    const { comment: reply } = post(
+      base.instructor.id,
+      question.id,
+      "Because."
+    );
 
     expect(reply.parentId).toBe(question.id);
     expect(storedComments()).toHaveLength(2);
@@ -153,6 +161,17 @@ describe("createComment", () => {
     expect(storedComments()).toHaveLength(0);
   });
 
+  it("fails at the write for an author who doesn't exist, as it always has", () => {
+    expect(() => post(9999, null, "Hello")).toThrow(
+      "FOREIGN KEY constraint failed"
+    );
+    expect(storedComments()).toHaveLength(0);
+  });
+
+  it("reports a bad parent comment before noticing a missing author", () => {
+    expect(() => post(9999, 8888, "Hello")).toThrow("Parent comment not found");
+  });
+
   it("rejects a parent comment on a different lesson", () => {
     const { comment: question } = post(
       base.user.id,
@@ -169,7 +188,11 @@ describe("createComment", () => {
 
   it("rejects a reply to a reply", () => {
     const { comment: question } = post(base.user.id, null, "Why?");
-    const { comment: reply } = post(base.instructor.id, question.id, "Because.");
+    const { comment: reply } = post(
+      base.instructor.id,
+      question.id,
+      "Because."
+    );
 
     expect(() => post(base.user.id, reply.id, "But why?")).toThrow(
       "Replies can only be one level deep"

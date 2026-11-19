@@ -14,7 +14,7 @@ import {
   enrollments,
   CourseStatus,
 } from "~/db/schema";
-import { eq, and, or, sql } from "drizzle-orm";
+import { eq, or, sql } from "drizzle-orm";
 import { Card, CardContent } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import {
@@ -32,10 +32,11 @@ import { formatDuration, formatPrice } from "~/lib/utils";
 import { resolveCountry } from "~/lib/country.server";
 import { calculatePppPrice, getCountryTierInfo, COUNTRIES } from "~/lib/ppp";
 import { parseFormData, parseParams } from "~/lib/validation";
+import { findEnrollment } from "~/lib/enrollments.server";
 import { sendNotifications } from "~/lib/notifier.server";
 import {
   confirmIndividualPurchase,
-  confirmTeamPurchase,
+  confirmTeamLicence,
 } from "~/lib/purchases.server";
 
 function getCourseBySlug(slug: string) {
@@ -117,18 +118,8 @@ function getLessonCountForCourse(courseId: number) {
   return count?.count ?? 0;
 }
 
-function findEnrollment(userId: number, courseId: number) {
-  return db
-    .select()
-    .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
-    .get();
-}
-
 function isUserEnrolled(userId: number, courseId: number) {
-  return !!findEnrollment(userId, courseId);
+  return !!findEnrollment(db, userId, courseId);
 }
 
 function getEnrollmentCountForCourse(courseId: number) {
@@ -267,7 +258,7 @@ export async function action({ params, request }: Route.ActionArgs) {
   // Team purchase — user does NOT get enrolled themselves
   const { quantity } = parsed.data;
   const totalPrice = pppPrice * quantity;
-  confirmTeamPurchase(
+  confirmTeamLicence(
     db,
     currentUserId,
     course.id,

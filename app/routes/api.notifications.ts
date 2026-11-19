@@ -1,7 +1,11 @@
 import { data } from "react-router";
 import { z } from "zod";
 import type { Route } from "./+types/api.notifications";
-import { DROPDOWN_PAGE_SIZE } from "~/lib/notification-feed";
+import { requireUserId } from "~/lib/access.server";
+import {
+  DROPDOWN_PAGE_SIZE,
+  NOTIFICATIONS_SIGNED_OUT_MESSAGE,
+} from "~/lib/notification-feed";
 import {
   getNotificationFeed,
   getUnreadCount,
@@ -10,7 +14,7 @@ import {
   markNotificationUnread,
   NotificationNotFoundError,
 } from "~/lib/notifier.server";
-import { getCurrentUserId } from "~/lib/session";
+import { getErrorMessage } from "~/lib/utils";
 import { parseJsonBody } from "~/lib/validation";
 
 const viewSchema = z.object({
@@ -25,26 +29,16 @@ const changeSchema = z.discriminatedUnion("intent", [
   z.object({ intent: z.literal("mark-all-read") }),
 ]);
 
-async function requireUserId(request: Request): Promise<number> {
-  const currentUserId = await getCurrentUserId(request);
-
-  if (!currentUserId) {
-    throw data("Select a user from the DevUI panel to see Notifications.", {
-      status: 401,
-    });
-  }
-
-  return currentUserId;
-}
-
 function unavailable(error: unknown) {
-  const reason = error instanceof Error ? error.message : String(error);
-  console.error(`Could not reach Notifications: ${reason}`);
+  console.error(`Could not reach Notifications: ${getErrorMessage(error)}`);
   return data("Notifications are unavailable.", { status: 503 });
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  const currentUserId = await requireUserId(request);
+  const currentUserId = await requireUserId(
+    request,
+    NOTIFICATIONS_SIGNED_OUT_MESSAGE
+  );
   const parsed = viewSchema.safeParse(
     Object.fromEntries(new URL(request.url).searchParams)
   );
@@ -80,7 +74,10 @@ export async function action({ request }: Route.ActionArgs) {
     throw data("Method not allowed", { status: 405 });
   }
 
-  const currentUserId = await requireUserId(request);
+  const currentUserId = await requireUserId(
+    request,
+    NOTIFICATIONS_SIGNED_OUT_MESSAGE
+  );
   const parsed = await parseChange(request);
 
   if (!parsed.success) {

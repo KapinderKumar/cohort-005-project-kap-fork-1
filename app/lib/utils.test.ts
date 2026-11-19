@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { daysSince, formatRelativeTime } from "./utils";
+import { daysSince, formatRelativeTime, getErrorMessage } from "./utils";
+
+describe("getErrorMessage", () => {
+  it("reads an Error's message", () => {
+    expect(getErrorMessage(new Error("Knock is down"))).toBe("Knock is down");
+  });
+
+  it("turns anything else thrown into text", () => {
+    expect(getErrorMessage("timed out")).toBe("timed out");
+  });
+});
 
 describe("formatRelativeTime", () => {
   beforeEach(() => {

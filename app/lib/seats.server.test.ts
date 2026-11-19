@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
 import { RefundStatus, TeamMemberRole, UserRole } from "~/db/schema";
-import { confirmTeamPurchase } from "./purchases.server";
+import { confirmTeamLicence } from "./purchases.server";
 import { claimSeat, seatUnavailableReason } from "./seats.server";
 
 type TestDb = ReturnType<typeof createTestDb>;
@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 
 function buySeat(country: string | null = "IN") {
-  const { purchase, seats } = confirmTeamPurchase(
+  const { purchase, seats } = confirmTeamLicence(
     db,
     base.user.id,
     base.course.id,
@@ -97,6 +97,29 @@ describe("claimSeat", () => {
       error: "Coupon not found",
     });
     expect(enrollmentsOf(student.id)).toHaveLength(0);
+  });
+
+  it("fails at the write for a Student who doesn't exist, as it always has", () => {
+    const { seat } = buySeat();
+
+    expect(() => claimSeat(db, seat.code, 9999, "IN")).toThrow(
+      "FOREIGN KEY constraint failed"
+    );
+    expectNotClaimed(seat.id);
+  });
+
+  it("still claims the Seat when its course is gone, with nothing to announce", () => {
+    const { seat } = buySeat();
+    db.$client.pragma("foreign_keys = OFF");
+    db.delete(schema.courses)
+      .where(eq(schema.courses.id, base.course.id))
+      .run();
+
+    expect(claimSeat(db, seat.code, student.id, "IN")).toMatchObject({
+      ok: true,
+      notifications: [],
+    });
+    expect(storedSeat(seat.id)?.redeemedByUserId).toBe(student.id);
   });
 
   it("rejects a Seat that is already claimed", () => {
