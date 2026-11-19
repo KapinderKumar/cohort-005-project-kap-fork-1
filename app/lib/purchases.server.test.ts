@@ -4,7 +4,7 @@ import * as schema from "~/db/schema";
 import { TeamMemberRole } from "~/db/schema";
 import {
   confirmIndividualPurchase,
-  confirmTeamPurchase,
+  confirmTeamLicence,
 } from "./purchases.server";
 
 type TestDb = ReturnType<typeof createTestDb>;
@@ -101,15 +101,15 @@ describe("the New Enrollment Notification for an Individual Purchase", () => {
   });
 });
 
-describe("confirmTeamPurchase", () => {
+describe("confirmTeamLicence", () => {
   it("does not enroll the buyer", () => {
-    confirmTeamPurchase(db, base.user.id, base.course.id, 15800, "IN", 2);
+    confirmTeamLicence(db, base.user.id, base.course.id, 15800, "IN", 2);
 
     expect(storedEnrollments()).toHaveLength(0);
   });
 
   it("grants the requested number of Unclaimed Seats", () => {
-    const { purchase, team } = confirmTeamPurchase(
+    const { purchase, team } = confirmTeamLicence(
       db,
       base.user.id,
       base.course.id,
@@ -139,7 +139,7 @@ describe("confirmTeamPurchase", () => {
   });
 
   it("makes the buyer the Team Admin of a new team", () => {
-    const { team } = confirmTeamPurchase(
+    const { team } = confirmTeamLicence(
       db,
       base.user.id,
       base.course.id,
@@ -158,7 +158,7 @@ describe("confirmTeamPurchase", () => {
   });
 
   it("reuses the team the buyer already administers", () => {
-    const first = confirmTeamPurchase(
+    const first = confirmTeamLicence(
       db,
       base.user.id,
       base.course.id,
@@ -166,7 +166,7 @@ describe("confirmTeamPurchase", () => {
       null,
       1
     );
-    const second = confirmTeamPurchase(
+    const second = confirmTeamLicence(
       db,
       base.user.id,
       base.course.id,
@@ -182,7 +182,7 @@ describe("confirmTeamPurchase", () => {
   it("lets an enrolled buyer buy Seats for others", () => {
     confirmIndividualPurchase(db, base.user.id, base.course.id, 7900, null);
 
-    confirmTeamPurchase(db, base.user.id, base.course.id, 7900, null, 1);
+    confirmTeamLicence(db, base.user.id, base.course.id, 7900, null, 1);
 
     expect(storedPurchases()).toHaveLength(2);
     expect(storedEnrollments()).toHaveLength(1);
@@ -191,7 +191,7 @@ describe("confirmTeamPurchase", () => {
 
   it("rejects a course that does not exist, recording nothing", () => {
     expect(() =>
-      confirmTeamPurchase(db, base.user.id, 9999, 7900, null, 1)
+      confirmTeamLicence(db, base.user.id, 9999, 7900, null, 1)
     ).toThrow();
     expect(storedPurchases()).toHaveLength(0);
     expect(storedSeats()).toHaveLength(0);

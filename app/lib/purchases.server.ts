@@ -48,7 +48,11 @@ export function confirmIndividualPurchase(
     throw new Error("User is already enrolled in this course");
   }
 
-  const course = db.select().from(courses).where(eq(courses.id, courseId)).get();
+  const course = db
+    .select()
+    .from(courses)
+    .where(eq(courses.id, courseId))
+    .get();
   if (!course) {
     throw new Error("Course not found");
   }
@@ -125,7 +129,7 @@ function generateSeats(
   return created;
 }
 
-export function confirmTeamPurchase(
+export function confirmTeamLicence(
   db: Db,
   userId: number,
   courseId: number,

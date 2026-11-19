@@ -18,7 +18,11 @@ beforeEach(() => {
 
   platformAdmin = db
     .insert(schema.users)
-    .values({ name: "Pat Admin", email: "pat@example.com", role: UserRole.Admin })
+    .values({
+      name: "Pat Admin",
+      email: "pat@example.com",
+      role: UserRole.Admin,
+    })
     .returning()
     .get();
 
@@ -104,7 +108,11 @@ describe("createComment", () => {
   it("posts a reply to a top-level comment", () => {
     const { comment: question } = post(base.user.id, null, "Why?");
 
-    const { comment: reply } = post(base.instructor.id, question.id, "Because.");
+    const { comment: reply } = post(
+      base.instructor.id,
+      question.id,
+      "Because."
+    );
 
     expect(reply.parentId).toBe(question.id);
     expect(storedComments()).toHaveLength(2);
@@ -180,7 +188,11 @@ describe("createComment", () => {
 
   it("rejects a reply to a reply", () => {
     const { comment: question } = post(base.user.id, null, "Why?");
-    const { comment: reply } = post(base.instructor.id, question.id, "Because.");
+    const { comment: reply } = post(
+      base.instructor.id,
+      question.id,
+      "Because."
+    );
 
     expect(() => post(base.user.id, reply.id, "But why?")).toThrow(
       "Replies can only be one level deep"

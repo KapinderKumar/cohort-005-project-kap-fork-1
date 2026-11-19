@@ -8,22 +8,14 @@ import {
   toInternalNotificationUrl,
   type NotificationFeed,
   type NotificationFeedItem,
+  type NotificationType,
 } from "~/lib/notification-feed";
+import { getErrorMessage } from "~/lib/utils";
 
 // ─── In-app Notifications ───
 // The only code that touches Knock (docs/adr/0013). Knock delivers and stores
 // Notifications when KNOCK_API_KEY is set. Without a key (local dev, tests)
 // each one is written to .outbox/ instead, and the Notification Feed is empty.
-
-export type NotificationType =
-  | "refund_request_approved"
-  | "refund_request_declined"
-  | "new_refund_request"
-  | "new_discussion_question"
-  | "new_discussion_reply"
-  | "seat_claimed"
-  | "course_rated"
-  | "new_enrollment";
 
 export type Notification = {
   type: NotificationType;
@@ -71,12 +63,13 @@ export class NotificationNotFoundError extends Error {
 
 const KNOCK_TIMEOUT_MS = 3000;
 
-// The SDK's page object hides `meta`, so the count is read from the raw response.
-const feedResponseSchema = z.object({
+// The SDK's page object hides `meta`, so both schemas read the raw response.
+// Reading the count needs only `meta`; listing also needs the entries and total.
+const unreadCountResponseSchema = z.object({
   meta: z.object({ unread_count: z.number() }),
 });
 
-const feedPageSchema = z.object({
+const feedListResponseSchema = z.object({
   entries: z.array(z.unknown()),
   meta: z.object({ unread_count: z.number(), total_count: z.number() }),
 });
@@ -93,7 +86,8 @@ const feedEntrySchema = z.object({
   }),
 });
 
-function toFeedItem(entry: unknown): NotificationFeedItem[] {
+// An array for flatMap: an entry that doesn't parse yields no items.
+function feedItemsFromEntry(entry: unknown): NotificationFeedItem[] {
   const parsed = feedEntrySchema.safeParse(entry);
   if (!parsed.success) return [];
 
@@ -133,7 +127,8 @@ export function knockTransport(
         .listItems(String(userId), feedChannelId, { page_size: 1 }, { signal })
         .asResponse();
 
-      return feedResponseSchema.parse(await response.json()).meta.unread_count;
+      return unreadCountResponseSchema.parse(await response.json()).meta
+        .unread_count;
     },
 
     async listFeed(userId, pageSize, signal) {
@@ -145,10 +140,12 @@ export function knockTransport(
           { signal }
         )
         .asResponse();
-      const { entries, meta } = feedPageSchema.parse(await response.json());
+      const { entries, meta } = feedListResponseSchema.parse(
+        await response.json()
+      );
 
       return {
-        items: entries.flatMap(toFeedItem),
+        items: entries.flatMap(feedItemsFromEntry),
         unreadCount: meta.unread_count,
         totalCount: meta.total_count,
       };
@@ -257,8 +254,9 @@ async function withTimeout<T>(
 }
 
 function logSendFailure(type: NotificationType | "all", error: unknown) {
-  const reason = error instanceof Error ? error.message : String(error);
-  console.error(`Could not send Notification (${type}): ${reason}`);
+  console.error(
+    `Could not send Notification (${type}): ${getErrorMessage(error)}`
+  );
 }
 
 /**

@@ -7,6 +7,7 @@ import { Button } from "~/components/ui/button";
 import {
   fetchNotificationFeed,
   fetchUnreadCount,
+  isAllReadSettling,
   markAllRead,
   setNotificationRead,
   subscribeToNotificationChanges,
@@ -16,10 +17,6 @@ import type { NotificationFeedItem } from "~/lib/notification-feed";
 import { cn, formatRelativeTime } from "~/lib/utils";
 
 const REFRESH_INTERVAL_MS = 60_000;
-
-// Knock finishes Mark all read shortly after accepting it, so a read this soon
-// afterwards can still return the old state.
-const ALL_READ_SETTLE_MS = 3000;
 
 type DropdownList =
   | { status: "loading" }
@@ -38,7 +35,7 @@ function ignoreFailure() {
  * Loads in the browser after the page renders, so no page waits for Knock.
  * Render with `key={userId}`, so a switched user never sees the last count.
  */
-export function NotificationBell() {
+export function NotificationBell({ userId }: { userId: number }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [unreadCount, setUnreadCount] = useState(0);
@@ -50,7 +47,6 @@ export function NotificationBell() {
   const listRequest = useRef<AbortController | null>(null);
   // Bumped by every read-state change, so older responses are discarded.
   const changeGeneration = useRef(0);
-  const allReadSettlesAt = useRef(0);
 
   const refreshCount = useCallback(async () => {
     if (!isTabVisible()) return;
@@ -70,14 +66,14 @@ export function NotificationBell() {
       setUnavailable(false);
       if (
         generation === changeGeneration.current &&
-        Date.now() >= allReadSettlesAt.current
+        !isAllReadSettling(userId)
       ) {
         setUnreadCount(count);
       }
     } catch {
       if (!controller.signal.aborted) setUnavailable(true);
     }
-  }, []);
+  }, [userId]);
 
   const loadList = useCallback(async () => {
     listRequest.current?.abort();
@@ -93,7 +89,7 @@ export function NotificationBell() {
       const feed = await fetchNotificationFeed(controller.signal);
       if (controller.signal.aborted) return;
 
-      const allReadSettling = Date.now() < allReadSettlesAt.current;
+      const allReadSettling = isAllReadSettling(userId);
       setUnavailable(false);
       setList({
         status: "ready",
@@ -109,7 +105,7 @@ export function NotificationBell() {
       setList({ status: "failed" });
       setUnavailable(true);
     }
-  }, []);
+  }, [userId]);
 
   // Runs on the first render and on every navigation.
   useEffect(() => {
@@ -149,7 +145,6 @@ export function NotificationBell() {
         if (change.kind === "count-changed") {
           setUnreadCount((count) => Math.max(0, count + change.delta));
         } else if (change.kind === "all-read") {
-          allReadSettlesAt.current = Date.now() + ALL_READ_SETTLE_MS;
           setUnreadCount(0);
           setList((current) =>
             current.status === "ready"
@@ -163,7 +158,6 @@ export function NotificationBell() {
               : current
           );
         } else {
-          allReadSettlesAt.current = 0;
           void refreshCount();
         }
       }),
@@ -235,7 +229,7 @@ export function NotificationBell() {
               size="xs"
               disabled={unavailable || unreadCount === 0}
               onClick={() => {
-                markAllRead().catch(ignoreFailure);
+                markAllRead(userId).catch(ignoreFailure);
               }}
             >
               <CheckCheck /> Mark all read
@@ -300,8 +294,8 @@ function DropdownBody({
           You&apos;re all caught up
         </div>
         <div>
-          Notifications about your courses, discussions and refunds will show
-          up here.
+          Notifications about your courses, discussions and Refund Requests will
+          show up here.
         </div>
       </div>
     );

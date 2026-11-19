@@ -1,11 +1,18 @@
 import { useEffect, useState } from "react";
-import { data, Link, useRevalidator } from "react-router";
-import { ArrowRight, Bell, BellOff, CheckCheck } from "lucide-react";
-import { toast } from "sonner";
+import { data, isRouteErrorResponse, Link, useRevalidator } from "react-router";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Bell,
+  BellOff,
+  CheckCheck,
+} from "lucide-react";
 import type { Route } from "./+types/notifications";
 import { NotificationTypeIcon } from "~/components/notification-type-icon";
 import { Button } from "~/components/ui/button";
+import { requireUserId } from "~/lib/access.server";
 import {
+  isAllReadSettling,
   markAllRead,
   setNotificationRead,
   subscribeToNotificationChanges,
@@ -13,40 +20,67 @@ import {
 import {
   FULL_PAGE_SIZE,
   getNotificationTypeDetails,
+  markAllReadInState,
+  NOTIFICATIONS_SIGNED_OUT_MESSAGE,
+  readStateFromFeed,
+  setItemReadInState,
+  undoAllReadInState,
   type NotificationFeed,
   type NotificationFeedItem,
 } from "~/lib/notification-feed";
 import { getNotificationFeed } from "~/lib/notifier.server";
-import { getCurrentUserId } from "~/lib/session";
-import { cn, formatRelativeTime } from "~/lib/utils";
+import { cn, formatRelativeTime, getErrorMessage } from "~/lib/utils";
+
+const FEED_UNAVAILABLE_MESSAGE = "Couldn't load your Notifications";
+const CHANGE_FAILED_MESSAGE =
+  "Couldn't update that Notification. Please try again.";
+const ALL_READ_FAILED_MESSAGE =
+  "Couldn't mark your Notifications read. Please try again.";
 
 export function meta() {
   return [{ title: "Notifications — Cadence" }];
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  const currentUserId = await getCurrentUserId(request);
-
-  if (!currentUserId) {
-    throw data("Select a user from the DevUI panel to see Notifications.", {
-      status: 401,
-    });
-  }
+  const userId = await requireUserId(request, NOTIFICATIONS_SIGNED_OUT_MESSAGE);
 
   try {
     return {
-      feed: await getNotificationFeed(currentUserId, FULL_PAGE_SIZE),
+      feed: await getNotificationFeed(userId, FULL_PAGE_SIZE),
+      userId,
     };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    console.error(`Could not read Notifications: ${reason}`);
-    return { feed: null };
+    console.error(`Could not read Notifications: ${getErrorMessage(error)}`);
+    throw data(FEED_UNAVAILABLE_MESSAGE, { status: 503 });
   }
 }
 
 export default function Notifications({ loaderData }: Route.ComponentProps) {
-  const { feed } = loaderData;
-  return feed ? <FeedView feed={feed} /> : <FeedUnavailable />;
+  return <FeedView feed={loaderData.feed} userId={loaderData.userId} />;
+}
+
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  if (isRouteErrorResponse(error) && error.status === 503) {
+    return <FeedUnavailable />;
+  }
+
+  let title = "Something went wrong";
+  let message = "An unexpected error occurred.";
+
+  if (isRouteErrorResponse(error)) {
+    title = error.status === 401 ? "Sign in required" : `Error ${error.status}`;
+    message = typeof error.data === "string" ? error.data : error.statusText;
+  }
+
+  return (
+    <div className="flex min-h-[50vh] items-center justify-center p-6">
+      <div className="text-center">
+        <AlertTriangle className="mx-auto mb-4 size-12 text-muted-foreground" />
+        <h1 className="mb-2 text-2xl font-bold">{title}</h1>
+        <p className="text-muted-foreground">{message}</p>
+      </div>
+    </div>
+  );
 }
 
 function PageHeader({ children }: { children?: React.ReactNode }) {
@@ -68,9 +102,7 @@ function FeedUnavailable() {
       </div>
       <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
         <BellOff className="size-14 text-muted-foreground opacity-25" />
-        <div className="text-lg font-medium">
-          Couldn&apos;t load your Notifications
-        </div>
+        <div className="text-lg font-medium">{FEED_UNAVAILABLE_MESSAGE}</div>
         <Button
           variant="outline"
           disabled={revalidator.state === "loading"}
@@ -83,47 +115,57 @@ function FeedUnavailable() {
   );
 }
 
-function FeedView({ feed }: { feed: NotificationFeed }) {
+function ignoreFailure() {
+  // The change-failed announcement rolls the page back and shows the message.
+}
+
+function FeedView({
+  feed,
+  userId,
+}: {
+  feed: NotificationFeed;
+  userId: number;
+}) {
   const [loadedFeed, setLoadedFeed] = useState(feed);
-  const [items, setItems] = useState(feed.items);
-  const [unreadCount, setUnreadCount] = useState(feed.unreadCount);
+  const [readState, setReadState] = useState(() =>
+    readStateFromFeed(feed, isAllReadSettling(userId))
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
+  const [changeError, setChangeError] = useState<string | null>(null);
+  const { items, unreadCount } = readState;
 
   // A new load (retry, or a switched user) replaces what is on screen.
   if (feed !== loadedFeed) {
     setLoadedFeed(feed);
-    setItems(feed.items);
-    setUnreadCount(feed.unreadCount);
+    setReadState(readStateFromFeed(feed, isAllReadSettling(userId)));
     setSelectedId(null);
     setFilter(null);
+    setChangeError(null);
   }
 
-  // Mark all read in the bell's dropdown also applies to this page.
+  // Mark all read applies here wherever it started, including the bell's
+  // dropdown, and so does its failure.
   useEffect(
     () =>
       subscribeToNotificationChanges((change) => {
-        if (change.kind !== "all-read") return;
-        setItems((current) =>
-          current.map((item) => ({ ...item, read: true }))
-        );
-        setUnreadCount(0);
+        if (change.kind === "all-read") {
+          setReadState(markAllReadInState);
+        } else if (change.kind === "change-failed") {
+          if (change.failed !== "all-read") return;
+          setReadState(undoAllReadInState);
+          setChangeError(ALL_READ_FAILED_MESSAGE);
+        }
       }),
     []
   );
 
-  function applyRead(id: string, read: boolean) {
-    setItems((current) =>
-      current.map((item) => (item.id === id ? { ...item, read } : item))
-    );
-    setUnreadCount((count) => Math.max(0, count + (read ? -1 : 1)));
-  }
-
   function changeRead(item: NotificationFeedItem, read: boolean) {
-    applyRead(item.id, read);
+    setChangeError(null);
+    setReadState((current) => setItemReadInState(current, item.id, read));
     setNotificationRead(item.id, read).catch(() => {
-      applyRead(item.id, !read);
-      toast.error("Couldn't update that Notification. Please try again.");
+      setReadState((current) => setItemReadInState(current, item.id, !read));
+      setChangeError(CHANGE_FAILED_MESSAGE);
     });
   }
 
@@ -133,18 +175,14 @@ function FeedView({ feed }: { feed: NotificationFeed }) {
   }
 
   function handleMarkAllRead() {
-    const previousItems = items;
-    const previousUnreadCount = unreadCount;
-
-    markAllRead().catch(() => {
-      setItems(previousItems);
-      setUnreadCount(previousUnreadCount);
-      toast.error("Couldn't mark your Notifications read. Please try again.");
-    });
+    setChangeError(null);
+    markAllRead(userId).catch(ignoreFailure);
   }
 
   const labels = [
-    ...new Set(items.map((item) => getNotificationTypeDetails(item.type).label)),
+    ...new Set(
+      items.map((item) => getNotificationTypeDetails(item.type).label)
+    ),
   ];
   const activeFilter = filter && labels.includes(filter) ? filter : null;
   const visibleItems = activeFilter
@@ -171,6 +209,12 @@ function FeedView({ feed }: { feed: NotificationFeed }) {
         </Button>
       </div>
 
+      {changeError && (
+        <p role="alert" className="border-b px-8 py-2 text-sm text-destructive">
+          {changeError}
+        </p>
+      )}
+
       {items.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center text-muted-foreground">
           <Bell className="size-14 opacity-25" />
@@ -178,8 +222,9 @@ function FeedView({ feed }: { feed: NotificationFeed }) {
             Nothing here yet
           </div>
           <div className="max-w-sm text-sm">
-            When something happens that concerns you, such as an answer to your
-            question or a decision on your refund request, it will show up here.
+            When something happens that concerns you, such as a Discussion Reply
+            to your Discussion Question or a decision on your Refund Request, it
+            will show up here.
           </div>
         </div>
       ) : (

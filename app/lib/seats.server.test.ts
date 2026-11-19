@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
 import { RefundStatus, TeamMemberRole, UserRole } from "~/db/schema";
-import { confirmTeamPurchase } from "./purchases.server";
+import { confirmTeamLicence } from "./purchases.server";
 import { claimSeat, seatUnavailableReason } from "./seats.server";
 
 type TestDb = ReturnType<typeof createTestDb>;
@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 
 function buySeat(country: string | null = "IN") {
-  const { purchase, seats } = confirmTeamPurchase(
+  const { purchase, seats } = confirmTeamLicence(
     db,
     base.user.id,
     base.course.id,
@@ -111,7 +111,9 @@ describe("claimSeat", () => {
   it("still claims the Seat when its course is gone, with nothing to announce", () => {
     const { seat } = buySeat();
     db.$client.pragma("foreign_keys = OFF");
-    db.delete(schema.courses).where(eq(schema.courses.id, base.course.id)).run();
+    db.delete(schema.courses)
+      .where(eq(schema.courses.id, base.course.id))
+      .run();
 
     expect(claimSeat(db, seat.code, student.id, "IN")).toMatchObject({
       ok: true,

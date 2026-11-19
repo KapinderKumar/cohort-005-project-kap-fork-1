@@ -45,11 +45,30 @@ export async function fetchNotificationFeed(
 export type NotificationChange =
   | { kind: "count-changed"; delta: number }
   | { kind: "all-read" }
-  | { kind: "change-failed" };
+  | { kind: "change-failed"; failed: "count-changed" | "all-read" };
+
+type RequestedChange = Exclude<NotificationChange, { kind: "change-failed" }>;
 
 const CHANGE_EVENT = "notification-change";
 const changes = new EventTarget();
 const pendingChanges = new Set<Promise<void>>();
+
+// Knock finishes Mark all read shortly after accepting it, so a read this soon
+// afterwards can still return the old state.
+const ALL_READ_SETTLE_MS = 3000;
+
+// Kept per person: the DevUI switches users without reloading the page.
+const allReadByUser = new Map<
+  number,
+  { inFlight: number; settlesAt: number }
+>();
+
+/** True from Mark all read starting until Knock has had time to finish it. */
+export function isAllReadSettling(userId: number): boolean {
+  const allRead = allReadByUser.get(userId);
+  if (!allRead) return false;
+  return allRead.inFlight > 0 || Date.now() < allRead.settlesAt;
+}
 
 function announce(change: NotificationChange) {
   changes.dispatchEvent(new CustomEvent(CHANGE_EVENT, { detail: change }));
@@ -81,14 +100,22 @@ async function postChange(body: object): Promise<void> {
 }
 
 // Announces the change straight away, so the UI doesn't wait for Knock.
-function sendChange(body: object, change: NotificationChange): Promise<void> {
+function sendChange(
+  body: object,
+  change: RequestedChange,
+  onSettled?: (succeeded: boolean) => void
+): Promise<void> {
   announce(change);
 
   const request: Promise<void> = postChange(body)
-    .catch((error: unknown) => {
-      announce({ kind: "change-failed" });
-      throw error;
-    })
+    .then(
+      () => onSettled?.(true),
+      (error: unknown) => {
+        onSettled?.(false);
+        announce({ kind: "change-failed", failed: change.kind });
+        throw error;
+      }
+    )
     .finally(() => pendingChanges.delete(request));
 
   pendingChanges.add(request);
@@ -102,6 +129,17 @@ export function setNotificationRead(id: string, read: boolean): Promise<void> {
   );
 }
 
-export function markAllRead(): Promise<void> {
-  return sendChange({ intent: "mark-all-read" }, { kind: "all-read" });
+export function markAllRead(userId: number): Promise<void> {
+  const allRead = allReadByUser.get(userId) ?? { inFlight: 0, settlesAt: 0 };
+  allReadByUser.set(userId, allRead);
+  allRead.inFlight += 1;
+
+  return sendChange(
+    { intent: "mark-all-read" },
+    { kind: "all-read" },
+    (succeeded) => {
+      allRead.inFlight -= 1;
+      allRead.settlesAt = succeeded ? Date.now() + ALL_READ_SETTLE_MS : 0;
+    }
+  );
 }
