@@ -410,6 +410,181 @@ describe("declining a Refund Request", () => {
   });
 });
 
+describe("the Notification for a decided Refund Request", () => {
+  it("tells the buyer their refund was approved", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+
+    const result = approveRefundRequest(db, id, platformAdmin.id, null, NOW);
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notifications).toEqual([
+      {
+        type: "refund_request_approved",
+        actorId: platformAdmin.id,
+        recipientIds: [base.user.id],
+        title: "Refund approved",
+        body: "Your refund request for Test Course was approved, and your refund is on its way.",
+        url: "/settings#refund-requests",
+      },
+    ]);
+  });
+
+  it("adds the Decision Note to an approval when there is one", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+
+    const result = approveRefundRequest(
+      db,
+      id,
+      platformAdmin.id,
+      "Sorry it wasn't a fit.",
+      NOW
+    );
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notifications[0].body).toBe(
+      "Your refund request for Test Course was approved, and your refund is on its way. Sorry it wasn't a fit."
+    );
+  });
+
+  it("tells the buyer their refund was declined, with the Decision Note", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+
+    const result = declineRefundRequest(
+      db,
+      id,
+      platformAdmin.id,
+      "You finished the course.",
+      NOW
+    );
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notifications).toEqual([
+      {
+        type: "refund_request_declined",
+        actorId: platformAdmin.id,
+        recipientIds: [base.user.id],
+        title: "Refund declined",
+        body: "Your refund request for Test Course was declined. You still have everything you bought. You finished the course.",
+        url: "/settings#refund-requests",
+      },
+    ]);
+  });
+
+  it("says a decision concerns the buyer's Team Licence", () => {
+    const priya = addLearner("Priya");
+    const approved = buySeats(priya.id, 1);
+    const declined = buySeats(priya.id, 1);
+
+    const approval = approveRefundRequest(
+      db,
+      raise(approved.purchase.id, priya.id),
+      platformAdmin.id,
+      null,
+      NOW
+    );
+    const decline = declineRefundRequest(
+      db,
+      raise(declined.purchase.id, priya.id),
+      platformAdmin.id,
+      "Seats are in use.",
+      NOW
+    );
+
+    if (!approval.ok) throw new Error(approval.error);
+    if (!decline.ok) throw new Error(decline.error);
+    expect(approval.notifications[0].recipientIds).toEqual([priya.id]);
+    expect(approval.notifications[0].body).toBe(
+      "Your refund request for your Test Course Team Licence was approved, and your refund is on its way."
+    );
+    expect(decline.notifications[0].body).toBe(
+      "Your refund request for your Test Course Team Licence was declined. You still have everything you bought. Seats are in use."
+    );
+  });
+
+  it("returns no Notifications from a failed decision", () => {
+    const purchase = buyForSelf(base.user.id);
+    const id = raise(purchase.id, base.user.id);
+    approveRefundRequest(db, id, platformAdmin.id, null, NOW);
+
+    const result = declineRefundRequest(db, id, platformAdmin.id, "Too late.", NOW);
+
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty("notifications");
+  });
+});
+
+describe("the Notification for a new Refund Request", () => {
+  it("tells every Platform Admin about an Individual Purchase", () => {
+    const secondAdmin = db
+      .insert(schema.users)
+      .values({
+        name: "Quinn Admin",
+        email: "quinn@example.com",
+        role: UserRole.Admin,
+      })
+      .returning()
+      .get();
+    const purchase = buyForSelf(base.user.id);
+
+    const result = raiseRefundRequest(
+      db,
+      purchase.id,
+      base.user.id,
+      "It was not what I expected.",
+      NOW
+    );
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notifications).toEqual([
+      {
+        type: "new_refund_request",
+        actorId: base.user.id,
+        recipientIds: [platformAdmin.id, secondAdmin.id],
+        title: "New refund request",
+        body: "Test User requested a refund for Test Course.",
+        url: "/admin/refunds",
+      },
+    ]);
+  });
+
+  it("says when a Team Licence is involved, without the amount or Seat count", () => {
+    const priya = addLearner("Priya");
+    const { purchase } = buySeats(priya.id, 3);
+
+    const result = raiseRefundRequest(
+      db,
+      purchase.id,
+      priya.id,
+      "We no longer need these.",
+      NOW
+    );
+
+    if (!result.ok) throw new Error(result.error);
+    expect(result.notifications[0].body).toBe(
+      "Priya requested a refund for a Test Course Team Licence."
+    );
+  });
+
+  it("returns no Notifications when the request is refused", () => {
+    const purchase = buyForSelf(base.user.id);
+    raise(purchase.id, base.user.id);
+
+    const result = raiseRefundRequest(
+      db,
+      purchase.id,
+      base.user.id,
+      "Asking twice.",
+      NOW
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty("notifications");
+  });
+});
+
 describe("listing Refund Requests", () => {
   it("shows a Platform Admin live figures and the rules a request breaks", () => {
     const purchase = buyForSelf(base.user.id);

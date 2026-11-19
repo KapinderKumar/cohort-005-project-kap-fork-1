@@ -1,13 +1,7 @@
 import { data } from "react-router";
 import { eq, and } from "drizzle-orm";
 import { db } from "~/db";
-import {
-  UserRole,
-  users,
-  courses,
-  enrollments,
-  purchases,
-} from "~/db/schema";
+import { UserRole, users, courses, enrollments, purchases } from "~/db/schema";
 import { getCurrentUserId } from "~/lib/session";
 import { resolveCountry } from "~/lib/country.server";
 import { checkPppAccess } from "~/lib/ppp";
@@ -134,10 +128,13 @@ export async function getAccess(
 /**
  * Throws 401 unless someone is signed in. Returns their user id.
  */
-export async function requireUserId(request: Request): Promise<number> {
+export async function requireUserId(
+  request: Request,
+  signedOutMessage = "Select a user from the DevUI panel."
+): Promise<number> {
   const userId = await getCurrentUserId(request);
   if (!userId) {
-    throw data("Select a user from the DevUI panel.", { status: 401 });
+    throw data(signedOutMessage, { status: 401 });
   }
   return userId;
 }
